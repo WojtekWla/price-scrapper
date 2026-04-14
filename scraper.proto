@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+option go_package = "./proto_gen";
+
+
+service Scraper {
+    rpc RegisterProduct (ScrapProductRequest) returns (ScrapProductReply) {}
+}
+
+message ScrapProductRequest {
+    string product = 1;
+    string frequency = 2;
+}
+
+message ScrapProductReply {
+    string message = 1;
+}
