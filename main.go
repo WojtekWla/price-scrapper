@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
+	"os"
+	"price-scrapper/config"
+	"price-scrapper/db"
 	pb "price-scrapper/proto_gen"
 	"price-scrapper/service"
 
@@ -10,7 +14,26 @@ import (
 )
 
 func main() {
-	log.Println("Starting server")
+	log.Println("Starting scraping app")
+	ctx := context.Background()
+	dbConf := config.InitializeConfigs()
+
+	err := db.RunMigrations(ctx, dbConf)
+	if err != nil {
+		log.Fatalf("Error running migrations: %v", err)
+		os.Exit(1)
+	}
+
+	dbPool, err := db.CreateConnection(ctx, dbConf)
+
+	log.Println("Connecting to database")
+	if err != nil {
+		log.Fatalf("Unable to crate db connection: %v", err)
+		os.Exit(1)
+	}
+
+	log.Println("Successfully connected to database")
+	defer dbPool.Close()
 
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
