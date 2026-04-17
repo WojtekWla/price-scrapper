@@ -20,7 +20,11 @@ func (s *Server) RegisterProduct(ctx context.Context, in *pb.ScrapProductRequest
 
 	//register product in db and time
 
-	s.ScrapperService.RegisterProduct(service.Product{Name: in.Product, Frequency: in.Frequency})
+	err := s.ScrapperService.RegisterProduct(ctx, service.Product{Name: in.Product, Frequency: in.Frequency})
+	if err != nil {
+		return &pb.ScrapProductReply{Message: err.Error()}, nil
+	}
+
 	return &pb.ScrapProductReply{Message: "Product " + in.Product + " registered"}, nil
 }
 

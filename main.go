@@ -8,6 +8,7 @@ import (
 	"price-scrapper/config"
 	"price-scrapper/db"
 	pb "price-scrapper/proto_gen"
+	"price-scrapper/repository"
 	"price-scrapper/service"
 
 	"google.golang.org/grpc"
@@ -43,8 +44,11 @@ func main() {
 	s := grpc.NewServer(
 		grpc.UnaryInterceptor(loggingInterceptor),
 	)
+
+	repository := repository.NewScrapperRepository(dbPool)
+
 	pb.RegisterScraperServer(s, &Server{
-		ScrapperService: service.NewScraperService(),
+		ScrapperService: service.NewScraperService(repository),
 	})
 	log.Printf("Server listening on port %v", lis.Addr())
 
