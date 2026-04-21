@@ -1,0 +1,2 @@
+ALTER TABLE scrap_job 
+DROP COLUMN IF EXISTS frequency;

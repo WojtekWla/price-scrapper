@@ -7,6 +7,7 @@ import (
 	"os"
 	"price-scrapper/config"
 	"price-scrapper/db"
+	"price-scrapper/orchestrator"
 	pb "price-scrapper/proto_gen"
 	"price-scrapper/repository"
 	"price-scrapper/service"
@@ -46,9 +47,14 @@ func main() {
 	)
 
 	repository := repository.NewScrapperRepository(dbPool)
+	service := service.NewScraperService(repository)
+
+	orch := orchestrator.NewOrchestrator(service)
+
+	go orch.RunOrchestrator(ctx)
 
 	pb.RegisterScraperServer(s, &Server{
-		ScrapperService: service.NewScraperService(repository),
+		ScrapperService: service,
 	})
 	log.Printf("Server listening on port %v", lis.Addr())
 

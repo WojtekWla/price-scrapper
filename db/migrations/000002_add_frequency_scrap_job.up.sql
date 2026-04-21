@@ -1,0 +1,2 @@
+ALTER TABLE scrap_job 
+ADD COLUMN frequency VARCHAR(255) NOT NULL;

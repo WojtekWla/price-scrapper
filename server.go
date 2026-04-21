@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"price-scrapper/models"
 	pb "price-scrapper/proto_gen"
 	"price-scrapper/service"
 	"time"
@@ -20,7 +21,7 @@ func (s *Server) RegisterProduct(ctx context.Context, in *pb.ScrapProductRequest
 
 	//register product in db and time
 
-	err := s.ScrapperService.RegisterProduct(ctx, service.Product{Name: in.Product, Frequency: in.Frequency})
+	err := s.ScrapperService.RegisterProduct(ctx, models.Product{Name: in.Product, Frequency: in.Frequency})
 	if err != nil {
 		return &pb.ScrapProductReply{Message: err.Error()}, nil
 	}
