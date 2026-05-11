@@ -11,20 +11,21 @@ type DatabaseConfig struct {
 	MigrationFile string
 }
 
-func InitializeConfigs() DatabaseConfig {
-	user := os.Getenv("DB_USER")
-	password := os.Getenv("DB_PASSWORD")
-	dbName := os.Getenv("DB_NAME")
-	dbAddress := os.Getenv("DB_ADDRESS")
-	dbPort := os.Getenv("DB_PORT")
-	migrations := os.Getenv("MIGRATIONS")
+type Config struct {
+	DB           DatabaseConfig
+	GeminiAPIKey string
+}
 
-	return DatabaseConfig{
-		User:          user,
-		Password:      password,
-		DbName:        dbName,
-		DbAddress:     dbAddress,
-		DbPort:        dbPort,
-		MigrationFile: migrations,
+func InitializeConfigs() Config {
+	return Config{
+		DB: DatabaseConfig{
+			User:          os.Getenv("DB_USER"),
+			Password:      os.Getenv("DB_PASSWORD"),
+			DbName:        os.Getenv("DB_NAME"),
+			DbAddress:     os.Getenv("DB_ADDRESS"),
+			DbPort:        os.Getenv("DB_PORT"),
+			MigrationFile: os.Getenv("MIGRATIONS"),
+		},
+		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
 	}
 }

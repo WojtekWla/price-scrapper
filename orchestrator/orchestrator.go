@@ -3,17 +3,22 @@ package orchestrator
 import (
 	"context"
 	"log"
+	"os"
+	"price-scrapper/llm"
+	"price-scrapper/orchestrator/scraper"
 	"price-scrapper/service"
 	"time"
 )
 
 type ScrapJobOrchestrator struct {
 	scrapService service.Service
+	geminiSvc    *llm.GeminiService
 }
 
-func NewOrchestrator(service service.Service) *ScrapJobOrchestrator {
+func NewOrchestrator(service service.Service, geminiSvc *llm.GeminiService) *ScrapJobOrchestrator {
 	return &ScrapJobOrchestrator{
 		scrapService: service,
+		geminiSvc:    geminiSvc,
 	}
 }
 
@@ -30,7 +35,36 @@ func (o *ScrapJobOrchestrator) RunOrchestrator(ctx context.Context) {
 		}
 
 		for _, job := range jobs {
-			log.Printf("Executing job: %s, %s, %d", job.Id, job.ProductName, job.TimeToRun)
+			go func() {
+				s, err := scraper.New()
+				if err != nil {
+					log.Printf("failed to create scraper: %v", err)
+					return
+				}
+				defer s.Close()
+
+				data, err := s.SearchAndScrapeProduct(ctx, job.ProductName)
+				if err != nil {
+					log.Printf("failed to search and scrape: %v", err)
+					return
+				}
+
+				if err := os.WriteFile("tmp.txt", []byte(data), 0644); err != nil {
+					log.Printf("failed to write tmp.txt: %v", err)
+				}
+
+				log.Printf("scraped %d bytes, written to tmp.txt", len(data))
+				log.Printf("sending %d bytes to Gemini for %q", len(data), job.ProductName)
+
+				result, err := o.geminiSvc.ExtractProducts(ctx, data)
+				if err != nil {
+					log.Printf("Gemini extraction failed: %v", err)
+					return
+				}
+
+				log.Printf("Gemini response received for %q", job.ProductName)
+				log.Printf("Following products were extracted for product: %s:\n%s", job.ProductName, result)
+			}()
 		}
 
 		err = o.scrapService.UpdateNextRunningTime(ctx, jobs)

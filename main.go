@@ -7,6 +7,7 @@ import (
 	"os"
 	"price-scrapper/config"
 	"price-scrapper/db"
+	"price-scrapper/llm"
 	"price-scrapper/orchestrator"
 	pb "price-scrapper/proto_gen"
 	"price-scrapper/repository"
@@ -18,15 +19,15 @@ import (
 func main() {
 	log.Println("Starting scraping app")
 	ctx := context.Background()
-	dbConf := config.InitializeConfigs()
+	conf := config.InitializeConfigs()
 
-	err := db.RunMigrations(ctx, dbConf)
+	err := db.RunMigrations(ctx, conf.DB)
 	if err != nil {
 		log.Fatalf("Error running migrations: %v", err)
 		os.Exit(1)
 	}
 
-	dbPool, err := db.CreateConnection(ctx, dbConf)
+	dbPool, err := db.CreateConnection(ctx, conf.DB)
 
 	log.Println("Connecting to database")
 	if err != nil {
@@ -46,10 +47,16 @@ func main() {
 		grpc.UnaryInterceptor(loggingInterceptor),
 	)
 
+	geminiSvc, err := llm.NewGeminiService(ctx, conf.GeminiAPIKey)
+	if err != nil {
+		log.Fatalf("failed to create Gemini service: %v", err)
+	}
+	defer geminiSvc.Close()
+
 	repository := repository.NewScrapperRepository(dbPool)
 	service := service.NewScraperService(repository)
 
-	orch := orchestrator.NewOrchestrator(service)
+	orch := orchestrator.NewOrchestrator(service, geminiSvc)
 
 	go orch.RunOrchestrator(ctx)
 
