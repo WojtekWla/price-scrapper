@@ -15,13 +15,15 @@ const (
 	getJobsToRun         = `SELECT id, product_name, frequency, next_running_time FROM scrap_job WHERE next_running_time < @now`
 	updateJobRunningTime = `UPDATE scrap_job SET next_running_time = $1 WHERE id = $2`
 	getSoonestJob        = `SELECT id, product_name, frequency, next_running_time FROM scrap_job ORDER BY next_running_time ASC LIMIT 1`
+	insertProductHistory = `INSERT INTO product_history(product_name, price, link, scraped_at) VALUES($1, $2, $3, $4)`
 )
 
 var (
-	ErrorInsertingNewJob       = errors.New("Unable to insert new job")
-	ErrorExtractingJobsToRun   = errors.New("Unable to extract jobs")
-	ErrorUpdateJobsRunningTime = errors.New("Unable to update jobs running time")
-	ErrorExtractingSoonestJob  = errors.New("Unable to extract soonest job")
+	ErrorInsertingNewJob         = errors.New("Unable to insert new job")
+	ErrorExtractingJobsToRun     = errors.New("Unable to extract jobs")
+	ErrorUpdateJobsRunningTime   = errors.New("Unable to update jobs running time")
+	ErrorExtractingSoonestJob    = errors.New("Unable to extract soonest job")
+	ErrorInsertingProductHistory = errors.New("Unable to insert product history")
 )
 
 type Repository interface {
@@ -29,6 +31,7 @@ type Repository interface {
 	GetJobAvailableToRun(ctx context.Context, current_time int64) ([]models.Job, error)
 	BatchJobRunningTimeUpdate(ctx context.Context, jobs []models.Job) error
 	GetSoonestJob(ctx context.Context) (*models.Job, error)
+	InsertProductHistory(ctx context.Context, products []models.ScrapedProduct) error
 }
 
 type ScrapperRepository struct {
@@ -133,4 +136,40 @@ func (r *ScrapperRepository) GetSoonestJob(ctx context.Context) (*models.Job, er
 	}
 
 	return &job, nil
+}
+
+func (r *ScrapperRepository) InsertProductHistory(ctx context.Context, products []models.ScrapedProduct) error {
+	tx, err := r.dbPool.Begin(ctx)
+	if err != nil {
+		log.Printf("Error starting transaction, %v", err)
+		return ErrorInsertingProductHistory
+	}
+	defer tx.Rollback(ctx)
+
+	batch := &pgx.Batch{}
+	for _, p := range products {
+		batch.Queue(insertProductHistory, p.Name, p.Price, p.Link, p.Time)
+	}
+
+	br := tx.SendBatch(ctx, batch)
+
+	for i := 0; i < len(products); i++ {
+		if _, err := br.Exec(); err != nil {
+			br.Close()
+			log.Printf("Error in batch at item %d: %v", i, err)
+			return ErrorInsertingProductHistory
+		}
+	}
+
+	if err := br.Close(); err != nil {
+		log.Printf("batch execution failed: %v", err)
+		return ErrorInsertingProductHistory
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("Error committing transaction, %v", err)
+		return ErrorInsertingProductHistory
+	}
+
+	return nil
 }

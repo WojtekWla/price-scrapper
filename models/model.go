@@ -11,3 +11,10 @@ type Job struct {
 	Frequency   string
 	TimeToRun   int64
 }
+
+type ScrapedProduct struct {
+	Name  string
+	Price int64
+	Link  string
+	Time  int64
+}

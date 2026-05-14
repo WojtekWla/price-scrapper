@@ -21,7 +21,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	r, err := c.RegisterProduct(ctx, &pb.ScrapProductRequest{Product: "Play Station 5", Frequency: "daily"})
+	r, err := c.RegisterProduct(ctx, &pb.ScrapProductRequest{Product: "Play Station 5", Frequency: "every minute"})
 	if err != nil {
 		log.Fatalf("response error: %v", err)
 	}

@@ -19,6 +19,7 @@ type Service interface {
 	GetJobsToRun(ctx context.Context) ([]models.Job, error)
 	UpdateNextRunningTime(ctx context.Context, jobs []models.Job) error
 	GetSoonestJob(ctx context.Context) (*models.Job, error)
+	SaveProductsHistory(ctx context.Context, products []models.ScrapedProduct) error
 }
 
 type ScraperService struct {
@@ -82,4 +83,14 @@ func (s *ScraperService) frequencyHandler(frequency string) int64 {
 
 func (s *ScraperService) GetSoonestJob(ctx context.Context) (*models.Job, error) {
 	return s.scrapperRepository.GetSoonestJob(ctx)
+}
+
+func (s *ScraperService) SaveProductsHistory(ctx context.Context, products []models.ScrapedProduct) error {
+	log.Printf("Saving products history, number of products: %d", len(products))
+	now := time.Now().Unix()
+	for i := range products {
+		products[i].Time = now
+	}
+
+	return s.scrapperRepository.InsertProductHistory(ctx, products)
 }

@@ -22,7 +22,7 @@ func RunMigrations(ctx context.Context, dbConf config.DatabaseConfig) error {
 
 	m, err := migrate.New(dbConf.MigrationFile, connectionString)
 	if err != nil {
-		log.Fatalf("Critical Migration Error: %v", err)
+		log.Fatalf("Critical Migration Error: failed to initialise migrator")
 		return err
 	}
 

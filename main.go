@@ -31,7 +31,7 @@ func main() {
 
 	log.Println("Connecting to database")
 	if err != nil {
-		log.Fatalf("Unable to crate db connection: %v", err)
+		log.Fatalf("Unable to create db connection")
 		os.Exit(1)
 	}
 

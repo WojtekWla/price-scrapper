@@ -7,18 +7,24 @@ import (
 	"price-scrapper/llm"
 	"price-scrapper/orchestrator/scraper"
 	"price-scrapper/service"
+	"sync/atomic"
 	"time"
 )
+
+const maxConcurrentJobs = 5
 
 type ScrapJobOrchestrator struct {
 	scrapService service.Service
 	geminiSvc    *llm.GeminiService
+	sem          chan struct{}
+	runningJobs  atomic.Int32
 }
 
 func NewOrchestrator(service service.Service, geminiSvc *llm.GeminiService) *ScrapJobOrchestrator {
 	return &ScrapJobOrchestrator{
 		scrapService: service,
 		geminiSvc:    geminiSvc,
+		sem:          make(chan struct{}, maxConcurrentJobs),
 	}
 }
 
@@ -35,7 +41,16 @@ func (o *ScrapJobOrchestrator) RunOrchestrator(ctx context.Context) {
 		}
 
 		for _, job := range jobs {
+			o.sem <- struct{}{}
 			go func() {
+				running := o.runningJobs.Add(1)
+				log.Printf("Job started for %q, running jobs: %d/%d", job.ProductName, running, maxConcurrentJobs)
+				defer func() {
+					<-o.sem
+					running := o.runningJobs.Add(-1)
+					log.Printf("Job finished for %q, running jobs: %d/%d", job.ProductName, running, maxConcurrentJobs)
+				}()
+
 				s, err := scraper.New()
 				if err != nil {
 					log.Printf("failed to create scraper: %v", err)
@@ -56,14 +71,17 @@ func (o *ScrapJobOrchestrator) RunOrchestrator(ctx context.Context) {
 				log.Printf("scraped %d bytes, written to tmp.txt", len(data))
 				log.Printf("sending %d bytes to Gemini for %q", len(data), job.ProductName)
 
-				result, err := o.geminiSvc.ExtractProducts(ctx, data)
+				products, err := o.geminiSvc.ExtractProducts(ctx, data)
 				if err != nil {
 					log.Printf("Gemini extraction failed: %v", err)
 					return
 				}
 
-				log.Printf("Gemini response received for %q", job.ProductName)
-				log.Printf("Following products were extracted for product: %s:\n%s", job.ProductName, result)
+				log.Printf("Gemini response received for %q: %d products extracted", job.ProductName, len(products))
+
+				if err := o.scrapService.SaveProductsHistory(ctx, products); err != nil {
+					log.Printf("Failed to save product history for %q: %v", job.ProductName, err)
+				}
 			}()
 		}
 

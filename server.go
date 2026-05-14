@@ -18,9 +18,6 @@ type Server struct {
 }
 
 func (s *Server) RegisterProduct(ctx context.Context, in *pb.ScrapProductRequest) (*pb.ScrapProductReply, error) {
-
-	//register product in db and time
-
 	err := s.ScrapperService.RegisterProduct(ctx, models.Product{Name: in.Product, Frequency: in.Frequency})
 	if err != nil {
 		return &pb.ScrapProductReply{Message: err.Error()}, nil
