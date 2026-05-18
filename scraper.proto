@@ -2,9 +2,11 @@ syntax = "proto3";
 
 option go_package = "./proto_gen";
 
-
 service Scraper {
     rpc RegisterProduct (ScrapProductRequest) returns (ScrapProductReply) {}
+    rpc GetProductHistory (GetProductHistoryRequest) returns (GetProductHistoryReply) {}
+    rpc ListProducts (ListProductsRequest) returns (ListProductsReply) {}
+    rpc DeleteProduct (DeleteProductRequest) returns (DeleteProductReply) {}
 }
 
 message ScrapProductRequest {
@@ -13,5 +15,41 @@ message ScrapProductRequest {
 }
 
 message ScrapProductReply {
+    string message = 1;
+}
+
+message GetProductHistoryRequest {
+    string product_name = 1;
+}
+
+message PriceEntry {
+    string name = 1;
+    int64 price = 2;
+    string link = 3;
+    int64 scraped_at = 4;
+}
+
+message GetProductHistoryReply {
+    repeated PriceEntry entries = 1;
+}
+
+message ListProductsRequest {}
+
+message ProductInfo {
+    string id = 1;
+    string product_name = 2;
+    string frequency = 3;
+    int64 next_run = 4;
+}
+
+message ListProductsReply {
+    repeated ProductInfo products = 1;
+}
+
+message DeleteProductRequest {
+    string product_name = 1;
+}
+
+message DeleteProductReply {
     string message = 1;
 }

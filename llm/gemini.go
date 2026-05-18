@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"price-scrapper/models"
+	"time"
 
 	"github.com/google/generative-ai-go/genai"
+	"golang.org/x/time/rate"
 	"google.golang.org/api/option"
 )
 
@@ -16,15 +18,17 @@ const (
 )
 
 type GeminiService struct {
-	client *genai.Client
+	client  *genai.Client
+	limiter *rate.Limiter
 }
 
-func NewGeminiService(ctx context.Context, apiKey string) (*GeminiService, error) {
+func NewGeminiService(ctx context.Context, apiKey string, requestsPerMinute int) (*GeminiService, error) {
 	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
 	}
-	return &GeminiService{client: client}, nil
+	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(requestsPerMinute)), 1)
+	return &GeminiService{client: client, limiter: limiter}, nil
 }
 
 func (g *GeminiService) Close() {
@@ -32,6 +36,10 @@ func (g *GeminiService) Close() {
 }
 
 func (g *GeminiService) ExtractProducts(ctx context.Context, scrapedData string) ([]models.ScrapedProduct, error) {
+	if err := g.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter interrupted: %w", err)
+	}
+
 	prompt := scrapedData + "\n\n" + instruction
 
 	m := g.client.GenerativeModel(model)

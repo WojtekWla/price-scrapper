@@ -19,7 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Scraper_RegisterProduct_FullMethodName = "/Scraper/RegisterProduct"
+	Scraper_RegisterProduct_FullMethodName   = "/Scraper/RegisterProduct"
+	Scraper_GetProductHistory_FullMethodName = "/Scraper/GetProductHistory"
+	Scraper_ListProducts_FullMethodName      = "/Scraper/ListProducts"
+	Scraper_DeleteProduct_FullMethodName     = "/Scraper/DeleteProduct"
 )
 
 // ScraperClient is the client API for Scraper service.
@@ -27,6 +30,9 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ScraperClient interface {
 	RegisterProduct(ctx context.Context, in *ScrapProductRequest, opts ...grpc.CallOption) (*ScrapProductReply, error)
+	GetProductHistory(ctx context.Context, in *GetProductHistoryRequest, opts ...grpc.CallOption) (*GetProductHistoryReply, error)
+	ListProducts(ctx context.Context, in *ListProductsRequest, opts ...grpc.CallOption) (*ListProductsReply, error)
+	DeleteProduct(ctx context.Context, in *DeleteProductRequest, opts ...grpc.CallOption) (*DeleteProductReply, error)
 }
 
 type scraperClient struct {
@@ -47,11 +53,44 @@ func (c *scraperClient) RegisterProduct(ctx context.Context, in *ScrapProductReq
 	return out, nil
 }
 
+func (c *scraperClient) GetProductHistory(ctx context.Context, in *GetProductHistoryRequest, opts ...grpc.CallOption) (*GetProductHistoryReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProductHistoryReply)
+	err := c.cc.Invoke(ctx, Scraper_GetProductHistory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scraperClient) ListProducts(ctx context.Context, in *ListProductsRequest, opts ...grpc.CallOption) (*ListProductsReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListProductsReply)
+	err := c.cc.Invoke(ctx, Scraper_ListProducts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scraperClient) DeleteProduct(ctx context.Context, in *DeleteProductRequest, opts ...grpc.CallOption) (*DeleteProductReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteProductReply)
+	err := c.cc.Invoke(ctx, Scraper_DeleteProduct_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ScraperServer is the server API for Scraper service.
 // All implementations must embed UnimplementedScraperServer
 // for forward compatibility.
 type ScraperServer interface {
 	RegisterProduct(context.Context, *ScrapProductRequest) (*ScrapProductReply, error)
+	GetProductHistory(context.Context, *GetProductHistoryRequest) (*GetProductHistoryReply, error)
+	ListProducts(context.Context, *ListProductsRequest) (*ListProductsReply, error)
+	DeleteProduct(context.Context, *DeleteProductRequest) (*DeleteProductReply, error)
 	mustEmbedUnimplementedScraperServer()
 }
 
@@ -64,6 +103,15 @@ type UnimplementedScraperServer struct{}
 
 func (UnimplementedScraperServer) RegisterProduct(context.Context, *ScrapProductRequest) (*ScrapProductReply, error) {
 	return nil, status.Error(codes.Unimplemented, "method RegisterProduct not implemented")
+}
+func (UnimplementedScraperServer) GetProductHistory(context.Context, *GetProductHistoryRequest) (*GetProductHistoryReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProductHistory not implemented")
+}
+func (UnimplementedScraperServer) ListProducts(context.Context, *ListProductsRequest) (*ListProductsReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListProducts not implemented")
+}
+func (UnimplementedScraperServer) DeleteProduct(context.Context, *DeleteProductRequest) (*DeleteProductReply, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteProduct not implemented")
 }
 func (UnimplementedScraperServer) mustEmbedUnimplementedScraperServer() {}
 func (UnimplementedScraperServer) testEmbeddedByValue()                 {}
@@ -104,6 +152,60 @@ func _Scraper_RegisterProduct_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Scraper_GetProductHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProductHistoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScraperServer).GetProductHistory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Scraper_GetProductHistory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScraperServer).GetProductHistory(ctx, req.(*GetProductHistoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Scraper_ListProducts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListProductsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScraperServer).ListProducts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Scraper_ListProducts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScraperServer).ListProducts(ctx, req.(*ListProductsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Scraper_DeleteProduct_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteProductRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScraperServer).DeleteProduct(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Scraper_DeleteProduct_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScraperServer).DeleteProduct(ctx, req.(*DeleteProductRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Scraper_ServiceDesc is the grpc.ServiceDesc for Scraper service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +216,18 @@ var Scraper_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterProduct",
 			Handler:    _Scraper_RegisterProduct_Handler,
+		},
+		{
+			MethodName: "GetProductHistory",
+			Handler:    _Scraper_GetProductHistory_Handler,
+		},
+		{
+			MethodName: "ListProducts",
+			Handler:    _Scraper_ListProducts_Handler,
+		},
+		{
+			MethodName: "DeleteProduct",
+			Handler:    _Scraper_DeleteProduct_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

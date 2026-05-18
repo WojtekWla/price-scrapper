@@ -7,6 +7,7 @@ import (
 	"price-scrapper/models"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,15 +16,26 @@ const (
 	getJobsToRun         = `SELECT id, product_name, frequency, next_running_time FROM scrap_job WHERE next_running_time < @now`
 	updateJobRunningTime = `UPDATE scrap_job SET next_running_time = $1 WHERE id = $2`
 	getSoonestJob        = `SELECT id, product_name, frequency, next_running_time FROM scrap_job ORDER BY next_running_time ASC LIMIT 1`
-	insertProductHistory = `INSERT INTO product_history(product_name, price, link, scraped_at) VALUES($1, $2, $3, $4)`
+	insertProductHistory = `INSERT INTO product_history(product_name, price, link, scraped_at, search_term) VALUES($1, $2, $3, $4, $5)`
+	getProductHistory    = `SELECT product_name, price, link, scraped_at FROM product_history WHERE search_term = $1 ORDER BY scraped_at DESC`
+	getAllJobs            = `SELECT id, product_name, frequency, next_running_time FROM scrap_job ORDER BY created_at`
+	deleteJob            = `DELETE FROM scrap_job WHERE product_name = $1`
 )
 
+// uniqueViolationCode is the PostgreSQL error code for unique constraint violations.
+const uniqueViolationCode = "23505"
+
 var (
-	ErrorInsertingNewJob         = errors.New("Unable to insert new job")
-	ErrorExtractingJobsToRun     = errors.New("Unable to extract jobs")
-	ErrorUpdateJobsRunningTime   = errors.New("Unable to update jobs running time")
-	ErrorExtractingSoonestJob    = errors.New("Unable to extract soonest job")
-	ErrorInsertingProductHistory = errors.New("Unable to insert product history")
+	ErrorInsertingNewJob         = errors.New("unable to insert new job")
+	ErrorProductAlreadyExists    = errors.New("product is already being tracked")
+	ErrorExtractingJobsToRun     = errors.New("unable to extract jobs")
+	ErrorUpdateJobsRunningTime   = errors.New("unable to update jobs running time")
+	ErrorExtractingSoonestJob    = errors.New("unable to extract soonest job")
+	ErrorInsertingProductHistory = errors.New("unable to insert product history")
+	ErrorExtractingProductHistory = errors.New("unable to extract product history")
+	ErrorExtractingAllJobs       = errors.New("unable to extract all jobs")
+	ErrorDeletingJob             = errors.New("unable to delete job")
+	ErrorJobNotFound             = errors.New("product not found")
 )
 
 type Repository interface {
@@ -32,6 +44,9 @@ type Repository interface {
 	BatchJobRunningTimeUpdate(ctx context.Context, jobs []models.Job) error
 	GetSoonestJob(ctx context.Context) (*models.Job, error)
 	InsertProductHistory(ctx context.Context, products []models.ScrapedProduct) error
+	GetProductHistory(ctx context.Context, searchTerm string) ([]models.ScrapedProduct, error)
+	GetAllJobs(ctx context.Context) ([]models.Job, error)
+	DeleteJob(ctx context.Context, productName string) error
 }
 
 type ScrapperRepository struct {
@@ -52,9 +67,12 @@ func (r *ScrapperRepository) InsertNewJob(ctx context.Context, newJob models.Job
 	}
 
 	_, err := r.dbPool.Exec(ctx, insertNewJob, args)
-
 	if err != nil {
-		log.Printf("Error executing query, %v", err)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationCode {
+			return ErrorProductAlreadyExists
+		}
+		log.Printf("Error executing query: %v", err)
 		return ErrorInsertingNewJob
 	}
 
@@ -68,18 +86,16 @@ func (r *ScrapperRepository) GetJobAvailableToRun(ctx context.Context, current_t
 
 	rows, err := r.dbPool.Query(ctx, getJobsToRun, args)
 	if err != nil {
-		log.Printf("Error executing query, %v", err)
+		log.Printf("Error executing query: %v", err)
 		return nil, ErrorExtractingJobsToRun
 	}
-
 	defer rows.Close()
 
 	var jobs []models.Job
 	for rows.Next() {
 		var j models.Job
-
 		if err := rows.Scan(&j.Id, &j.ProductName, &j.Frequency, &j.TimeToRun); err != nil {
-			log.Printf("Error extracting job, %v", err)
+			log.Printf("Error scanning job: %v", err)
 			return nil, ErrorExtractingJobsToRun
 		}
 		jobs = append(jobs, j)
@@ -89,12 +105,10 @@ func (r *ScrapperRepository) GetJobAvailableToRun(ctx context.Context, current_t
 
 func (r *ScrapperRepository) BatchJobRunningTimeUpdate(ctx context.Context, jobs []models.Job) error {
 	tx, err := r.dbPool.Begin(ctx)
-
 	if err != nil {
-		log.Printf("Error starting transaction, %v", err)
+		log.Printf("Error starting transaction: %v", err)
 		return ErrorUpdateJobsRunningTime
 	}
-
 	defer tx.Rollback(ctx)
 
 	batch := &pgx.Batch{}
@@ -114,12 +128,12 @@ func (r *ScrapperRepository) BatchJobRunningTimeUpdate(ctx context.Context, jobs
 	}
 
 	if err := batchUpdate.Close(); err != nil {
-		log.Printf("batch execution failed: %v", err)
+		log.Printf("Batch execution failed: %v", err)
 		return ErrorUpdateJobsRunningTime
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		log.Printf("Error commiting transaction, %v", err)
+		log.Printf("Error committing transaction: %v", err)
 		return ErrorUpdateJobsRunningTime
 	}
 
@@ -131,7 +145,7 @@ func (r *ScrapperRepository) GetSoonestJob(ctx context.Context) (*models.Job, er
 	row := r.dbPool.QueryRow(ctx, getSoonestJob)
 
 	if err := row.Scan(&job.Id, &job.ProductName, &job.Frequency, &job.TimeToRun); err != nil {
-		log.Printf("Error extracting soonest job, %v", err)
+		log.Printf("Error extracting soonest job: %v", err)
 		return nil, ErrorExtractingSoonestJob
 	}
 
@@ -141,14 +155,14 @@ func (r *ScrapperRepository) GetSoonestJob(ctx context.Context) (*models.Job, er
 func (r *ScrapperRepository) InsertProductHistory(ctx context.Context, products []models.ScrapedProduct) error {
 	tx, err := r.dbPool.Begin(ctx)
 	if err != nil {
-		log.Printf("Error starting transaction, %v", err)
+		log.Printf("Error starting transaction: %v", err)
 		return ErrorInsertingProductHistory
 	}
 	defer tx.Rollback(ctx)
 
 	batch := &pgx.Batch{}
 	for _, p := range products {
-		batch.Queue(insertProductHistory, p.Name, p.Price, p.Link, p.Time)
+		batch.Queue(insertProductHistory, p.Name, p.Price, p.Link, p.Time, p.SearchTerm)
 	}
 
 	br := tx.SendBatch(ctx, batch)
@@ -162,13 +176,67 @@ func (r *ScrapperRepository) InsertProductHistory(ctx context.Context, products 
 	}
 
 	if err := br.Close(); err != nil {
-		log.Printf("batch execution failed: %v", err)
+		log.Printf("Batch execution failed: %v", err)
 		return ErrorInsertingProductHistory
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		log.Printf("Error committing transaction, %v", err)
+		log.Printf("Error committing transaction: %v", err)
 		return ErrorInsertingProductHistory
+	}
+
+	return nil
+}
+
+func (r *ScrapperRepository) GetProductHistory(ctx context.Context, searchTerm string) ([]models.ScrapedProduct, error) {
+	rows, err := r.dbPool.Query(ctx, getProductHistory, searchTerm)
+	if err != nil {
+		log.Printf("Error executing query: %v", err)
+		return nil, ErrorExtractingProductHistory
+	}
+	defer rows.Close()
+
+	var products []models.ScrapedProduct
+	for rows.Next() {
+		var p models.ScrapedProduct
+		if err := rows.Scan(&p.Name, &p.Price, &p.Link, &p.Time); err != nil {
+			log.Printf("Error scanning product history: %v", err)
+			return nil, ErrorExtractingProductHistory
+		}
+		products = append(products, p)
+	}
+	return products, nil
+}
+
+func (r *ScrapperRepository) GetAllJobs(ctx context.Context) ([]models.Job, error) {
+	rows, err := r.dbPool.Query(ctx, getAllJobs)
+	if err != nil {
+		log.Printf("Error executing query: %v", err)
+		return nil, ErrorExtractingAllJobs
+	}
+	defer rows.Close()
+
+	var jobs []models.Job
+	for rows.Next() {
+		var j models.Job
+		if err := rows.Scan(&j.Id, &j.ProductName, &j.Frequency, &j.TimeToRun); err != nil {
+			log.Printf("Error scanning job: %v", err)
+			return nil, ErrorExtractingAllJobs
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}
+
+func (r *ScrapperRepository) DeleteJob(ctx context.Context, productName string) error {
+	result, err := r.dbPool.Exec(ctx, deleteJob, productName)
+	if err != nil {
+		log.Printf("Error executing delete: %v", err)
+		return ErrorDeletingJob
+	}
+
+	if result.RowsAffected() == 0 {
+		return ErrorJobNotFound
 	}
 
 	return nil

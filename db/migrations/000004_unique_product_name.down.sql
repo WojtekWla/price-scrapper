@@ -1,0 +1,1 @@
+ALTER TABLE scrap_job DROP CONSTRAINT scrap_job_product_name_unique;

@@ -22,8 +22,7 @@ func RunMigrations(ctx context.Context, dbConf config.DatabaseConfig) error {
 
 	m, err := migrate.New(dbConf.MigrationFile, connectionString)
 	if err != nil {
-		log.Fatalf("Critical Migration Error: failed to initialise migrator")
-		return err
+		return fmt.Errorf("failed to initialise migrator: %w", err)
 	}
 
 	log.Println("Running migrations...")
@@ -32,8 +31,7 @@ func RunMigrations(ctx context.Context, dbConf config.DatabaseConfig) error {
 			log.Println("No new migrations to apply.")
 			return nil
 		}
-		log.Fatalf("Migrations failed")
-		return err
+		return fmt.Errorf("migrations failed: %w", err)
 	}
 
 	log.Println("Migrations applied successfully")

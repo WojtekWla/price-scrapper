@@ -13,8 +13,9 @@ type Job struct {
 }
 
 type ScrapedProduct struct {
-	Name  string
-	Price int64
-	Link  string
-	Time  int64
+	SearchTerm string
+	Name       string
+	Price      int64
+	Link       string
+	Time       int64
 }

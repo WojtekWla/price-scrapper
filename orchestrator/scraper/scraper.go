@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
+	"os"
 	"strings"
 	"time"
-
-	"net/url"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
@@ -28,13 +28,18 @@ type Scraper struct {
 }
 
 func New() (*Scraper, error) {
-	u, err := launcher.New().
+	l := launcher.New().
 		Headless(true).
 		Set("disable-blink-features", "AutomationControlled").
 		Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36").
 		Set("lang", "en-US,en").
-		NoSandbox(true).
-		Launch()
+		NoSandbox(true)
+
+	if bin := os.Getenv("CHROME_BIN"); bin != "" {
+		l = l.Bin(bin)
+	}
+
+	u, err := l.Launch()
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to launch browser: %w", err)
