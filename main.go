@@ -55,9 +55,10 @@ func main() {
 		log.Println("Discord webhook not configured, notifications disabled")
 	}
 
+	wakeUpChanel := make(chan struct{}, 1)
 	repo := repository.NewScrapperRepository(dbPool)
-	svc := service.NewScraperService(repo)
-	orch := orchestrator.NewOrchestrator(svc, geminiSvc, discordNotifier)
+	svc := service.NewScraperService(repo, wakeUpChanel)
+	orch := orchestrator.NewOrchestrator(svc, geminiSvc, discordNotifier, wakeUpChanel)
 
 	go orch.RunOrchestrator(ctx)
 

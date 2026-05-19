@@ -14,6 +14,7 @@ var (
 	ErrorAddingProduct         = errors.New("unable to add new product")
 	ErrorProductAlreadyExists  = errors.New("product is already being tracked")
 	ErrorProductNotFound       = errors.New("product not found")
+	ErrorNoJobsFound           = errors.New("no jobs found")
 )
 
 type Service interface {
@@ -29,11 +30,13 @@ type Service interface {
 
 type ScraperService struct {
 	scrapperRepository repository.Repository
+	wakeUpChanel       chan struct{}
 }
 
-func NewScraperService(scrapperRepository repository.Repository) *ScraperService {
+func NewScraperService(scrapperRepository repository.Repository, wakeupChanel chan struct{}) *ScraperService {
 	return &ScraperService{
 		scrapperRepository: scrapperRepository,
+		wakeUpChanel:       wakeupChanel,
 	}
 }
 
@@ -58,6 +61,7 @@ func (s *ScraperService) RegisterProduct(ctx context.Context, product models.Pro
 		}
 		return ErrorAddingProduct
 	}
+	s.sendWakeUpCallToOrchestrator()
 
 	return nil
 }
@@ -85,7 +89,11 @@ func (s *ScraperService) frequencyHandler(frequency string) int64 {
 }
 
 func (s *ScraperService) GetSoonestJob(ctx context.Context) (*models.Job, error) {
-	return s.scrapperRepository.GetSoonestJob(ctx)
+	job, err := s.scrapperRepository.GetSoonestJob(ctx)
+	if errors.Is(err, repository.ErrorNoJobsFound) {
+		return nil, ErrorNoJobsFound
+	}
+	return job, err
 }
 
 func (s *ScraperService) SaveProductsHistory(ctx context.Context, products []models.ScrapedProduct) error {
@@ -114,4 +122,12 @@ func (s *ScraperService) DeleteProduct(ctx context.Context, productName string) 
 		return ErrorProductNotFound
 	}
 	return err
+}
+
+func (s *ScraperService) sendWakeUpCallToOrchestrator() {
+	log.Printf("Sending wake up call to orchestrator")
+	select {
+	case s.wakeUpChanel <- struct{}{}:
+	default:
+	}
 }

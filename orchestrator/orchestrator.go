@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"log"
 	"price-scrapper/discord"
 	"price-scrapper/llm"
@@ -17,15 +18,17 @@ type ScrapJobOrchestrator struct {
 	scrapService    service.Service
 	geminiSvc       *llm.GeminiService
 	discordNotifier *discord.Notifier
+	wakeUpChanel    chan struct{}
 	sem             chan struct{}
 	runningJobs     atomic.Int32
 }
 
-func NewOrchestrator(svc service.Service, geminiSvc *llm.GeminiService, discordNotifier *discord.Notifier) *ScrapJobOrchestrator {
+func NewOrchestrator(svc service.Service, geminiSvc *llm.GeminiService, discordNotifier *discord.Notifier, wakeUpChanel chan struct{}) *ScrapJobOrchestrator {
 	return &ScrapJobOrchestrator{
 		scrapService:    svc,
 		geminiSvc:       geminiSvc,
 		discordNotifier: discordNotifier,
+		wakeUpChanel:    wakeUpChanel,
 		sem:             make(chan struct{}, maxConcurrentJobs),
 	}
 }
@@ -34,11 +37,38 @@ func (o *ScrapJobOrchestrator) RunOrchestrator(ctx context.Context) {
 	for {
 		jobs, err := o.scrapService.GetJobsToRun(ctx)
 
-		if err != nil || len(jobs) == 0 {
+		if err != nil {
 			if err != nil {
 				log.Printf("Unable to extract jobs: %v, retrying in 5 seconds...", err)
 			}
-			if o.wait(ctx, 5*time.Second) {
+			if o.waitWithWakeup(ctx, 5*time.Second) {
+				return
+			}
+			continue
+		}
+
+		if len(jobs) == 0 {
+			soonest, err := o.scrapService.GetSoonestJob(ctx)
+			if errors.Is(err, service.ErrorNoJobsFound) {
+				log.Printf("No jobs in queue, waiting for new job")
+				if o.waitForWakeup(ctx) {
+					return
+				}
+				continue
+			}
+			if err != nil {
+				log.Printf("Unable to get soonest job: %v, retrying in 5 seconds...", err)
+				if o.waitWithWakeup(ctx, 5*time.Second) {
+					return
+				}
+				continue
+			}
+			waitDuration := time.Until(time.Unix(soonest.TimeToRun, 0))
+			if waitDuration < 0 {
+				waitDuration = 0
+			}
+			log.Printf("No jobs due yet, next job %q in %v", soonest.ProductName, waitDuration)
+			if o.waitWithWakeup(ctx, waitDuration) {
 				return
 			}
 			continue
@@ -113,17 +143,31 @@ func (o *ScrapJobOrchestrator) RunOrchestrator(ctx context.Context) {
 
 		log.Printf("Next job extraction in %v", waitDuration)
 
-		if o.wait(ctx, waitDuration) {
+		if o.waitWithWakeup(ctx, waitDuration) {
 			return
 		}
 	}
 }
 
-func (o *ScrapJobOrchestrator) wait(ctx context.Context, d time.Duration) bool {
+func (o *ScrapJobOrchestrator) waitForWakeup(ctx context.Context) bool {
+	select {
+	case <-o.wakeUpChanel:
+		return false
+	case <-ctx.Done():
+		return true
+	}
+}
+
+func (o *ScrapJobOrchestrator) waitWithWakeup(ctx context.Context, d time.Duration) bool {
+	if d == 0 {
+		return false
+	}
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
+		return false
+	case <-o.wakeUpChanel:
 		return false
 	case <-ctx.Done():
 		return true

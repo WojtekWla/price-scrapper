@@ -26,16 +26,17 @@ const (
 const uniqueViolationCode = "23505"
 
 var (
-	ErrorInsertingNewJob         = errors.New("unable to insert new job")
-	ErrorProductAlreadyExists    = errors.New("product is already being tracked")
-	ErrorExtractingJobsToRun     = errors.New("unable to extract jobs")
-	ErrorUpdateJobsRunningTime   = errors.New("unable to update jobs running time")
-	ErrorExtractingSoonestJob    = errors.New("unable to extract soonest job")
-	ErrorInsertingProductHistory = errors.New("unable to insert product history")
+	ErrorInsertingNewJob          = errors.New("unable to insert new job")
+	ErrorProductAlreadyExists     = errors.New("product is already being tracked")
+	ErrorExtractingJobsToRun      = errors.New("unable to extract jobs")
+	ErrorUpdateJobsRunningTime    = errors.New("unable to update jobs running time")
+	ErrorExtractingSoonestJob     = errors.New("unable to extract soonest job")
+	ErrorNoJobsFound              = errors.New("no jobs found")
+	ErrorInsertingProductHistory  = errors.New("unable to insert product history")
 	ErrorExtractingProductHistory = errors.New("unable to extract product history")
-	ErrorExtractingAllJobs       = errors.New("unable to extract all jobs")
-	ErrorDeletingJob             = errors.New("unable to delete job")
-	ErrorJobNotFound             = errors.New("product not found")
+	ErrorExtractingAllJobs        = errors.New("unable to extract all jobs")
+	ErrorDeletingJob              = errors.New("unable to delete job")
+	ErrorJobNotFound              = errors.New("product not found")
 )
 
 type Repository interface {
@@ -145,6 +146,9 @@ func (r *ScrapperRepository) GetSoonestJob(ctx context.Context) (*models.Job, er
 	row := r.dbPool.QueryRow(ctx, getSoonestJob)
 
 	if err := row.Scan(&job.Id, &job.ProductName, &job.Frequency, &job.TimeToRun); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrorNoJobsFound
+		}
 		log.Printf("Error extracting soonest job: %v", err)
 		return nil, ErrorExtractingSoonestJob
 	}
