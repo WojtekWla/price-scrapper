@@ -12,6 +12,7 @@ service Scraper {
 message ScrapProductRequest {
     string product = 1;
     string frequency = 2;
+    repeated string sites = 3;
 }
 
 message ScrapProductReply {

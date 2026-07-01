@@ -1,15 +1,17 @@
 package models
 
 type Product struct {
-	Name      string
-	Frequency string
+	Name         string
+	SitesToVisit []string
+	Frequency    string
 }
 
 type Job struct {
-	Id          string
-	ProductName string
-	Frequency   string
-	TimeToRun   int64
+	Id           string
+	ProductName  string
+	SitesToVisit []string
+	Frequency    string
+	TimeToRun    int64
 }
 
 type ScrapedProduct struct {
