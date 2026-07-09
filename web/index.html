@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Price Scrapper — panel</title>
+  <style>
+    :root {
+      --bg: #0f1115; --panel: #191c23; --panel-2: #21252e; --border: #2b303b;
+      --text: #e6e8ee; --muted: #9aa2b1; --accent: #5b8cff; --accent-2: #3a6bff;
+      --danger: #ff5c6c; --ok: #3ecf8e; --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.5;
+    }
+    header {
+      padding: 24px 20px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    header h1 { font-size: 20px; margin: 0; }
+    header .badge {
+      font-size: 12px; color: var(--muted); background: var(--panel-2);
+      border: 1px solid var(--border); padding: 4px 10px; border-radius: 999px;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 20px; display: grid; gap: 20px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px;
+    }
+    .card h2 { margin: 0 0 16px; font-size: 16px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+    input, select, textarea {
+      width: 100%; background: var(--panel-2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 14px;
+      font-family: inherit;
+    }
+    textarea { resize: vertical; min-height: 76px; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    .grid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+    .grid .full { grid-column: 1 / -1; }
+    @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    button {
+      font-family: inherit; font-size: 14px; cursor: pointer; border-radius: 8px;
+      border: 1px solid var(--border); padding: 10px 16px; background: var(--panel-2);
+      color: var(--text); transition: .15s;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+    button.primary:hover { background: var(--accent); }
+    button.danger { color: var(--danger); }
+    button.danger:hover { border-color: var(--danger); }
+    button.small { padding: 6px 12px; font-size: 13px; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .spacer { flex: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    td a { color: var(--accent); text-decoration: none; }
+    td a:hover { text-decoration: underline; }
+    .table-scroll { overflow-x: auto; }
+    .empty { color: var(--muted); font-size: 14px; padding: 12px 0; }
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+      padding: 12px 18px; border-radius: 10px; font-size: 14px; opacity: 0;
+      transition: opacity .2s, transform .2s; pointer-events: none; max-width: 90vw;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+    #toast.ok { border-color: var(--ok); }
+    #toast.err { border-color: var(--danger); }
+    code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🛒 Price Scrapper</h1>
+    <span class="badge">HTTP&nbsp;→&nbsp;gateway&nbsp;→&nbsp;gRPC</span>
+    <span class="spacer"></span>
+  </header>
+
+  <main class="wrap">
+    <!-- Rejestracja produktu -->
+    <section class="card">
+      <h2>Dodaj produkt do śledzenia</h2>
+      <form id="register-form">
+        <div class="grid">
+          <div>
+            <label for="product">Nazwa produktu</label>
+            <input id="product" name="product" placeholder="np. PlayStation 5" required autocomplete="off">
+          </div>
+          <div>
+            <label for="frequency">Częstotliwość</label>
+            <select id="frequency" name="frequency">
+              <option value="every minute">Co minutę</option>
+              <option value="every 5 minutes">Co 5 minut</option>
+              <option value="hourly">Co godzinę</option>
+              <option value="daily" selected>Codziennie</option>
+            </select>
+          </div>
+          <div class="full">
+            <label for="sites">Strony do przeszukania (opcjonalnie)</label>
+            <textarea id="sites" name="sites" placeholder="Jedna domena w linii, np.&#10;allegro.pl&#10;mediaexpert.pl&#10;x-kom.pl"></textarea>
+            <div class="hint">Pozostaw puste, aby wyszukiwać globalnie. Domeny są używane z operatorem <code>site:</code>.</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:16px">
+          <button type="submit" class="primary" id="register-btn">Dodaj produkt</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Lista produktów -->
+    <section class="card">
+      <div class="row">
+        <h2 style="margin:0">Śledzone produkty</h2>
+        <span class="spacer"></span>
+        <button class="small" id="refresh-btn">Odśwież</button>
+      </div>
+      <div class="table-scroll" style="margin-top:14px">
+        <table>
+          <thead>
+            <tr><th>Produkt</th><th>Częstotliwość</th><th>Następne uruchomienie</th><th></th></tr>
+          </thead>
+          <tbody id="products-body"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="products-empty" hidden>Brak śledzonych produktów.</div>
+    </section>
+
+    <!-- Historia cen -->
+    <section class="card">
+      <h2>Historia cen</h2>
+      <div class="row">
+        <input id="history-product" placeholder="Nazwa produktu" style="max-width:320px" autocomplete="off">
+        <button class="small" id="history-btn">Pokaż historię</button>
+      </div>
+      <div class="table-scroll" style="margin-top:14px">
+        <table>
+          <thead>
+            <tr><th>Data</th><th>Oferta</th><th>Cena</th><th>Link</th></tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="history-empty" hidden>Brak danych historycznych.</div>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+
+  <script>
+    const API = ""; // ten sam origin co gateway
+
+    // ---- helpers ----
+    function toast(msg, kind) {
+      const t = document.getElementById("toast");
+      t.textContent = msg;
+      t.className = "show " + (kind || "");
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => (t.className = ""), 3500);
+    }
+
+    async function api(method, path, body) {
+      const opts = { method, headers: {} };
+      if (body !== undefined) {
+        opts.headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(body);
+      }
+      let res;
+      try {
+        res = await fetch(API + path, opts);
+      } catch (e) {
+        throw new Error("Brak połączenia z gateway (" + e.message + ")");
+      }
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!res.ok) throw new Error(data.error || ("Błąd " + res.status));
+      return data;
+    }
+
+    function fmtTime(unixSeconds) {
+      if (!unixSeconds) return "—";
+      return new Date(Number(unixSeconds) * 1000).toLocaleString("pl-PL");
+    }
+
+    function fmtPrice(v) {
+      return Number(v).toLocaleString("pl-PL");
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s ?? "";
+      return d.innerHTML;
+    }
+
+    // ---- rejestracja ----
+    document.getElementById("register-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("register-btn");
+      const product = document.getElementById("product").value.trim();
+      const frequency = document.getElementById("frequency").value;
+      const sites = document.getElementById("sites").value
+        .split("\n").map((s) => s.trim()).filter(Boolean);
+
+      if (!product) return toast("Podaj nazwę produktu.", "err");
+
+      btn.disabled = true;
+      try {
+        const data = await api("POST", "/api/products", { product, frequency, sites });
+        toast(data.message || "Dodano produkt.", "ok");
+        document.getElementById("product").value = "";
+        document.getElementById("sites").value = "";
+        loadProducts();
+      } catch (err) {
+        toast(err.message, "err");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // ---- lista produktów ----
+    async function loadProducts() {
+      const body = document.getElementById("products-body");
+      const empty = document.getElementById("products-empty");
+      try {
+        const data = await api("GET", "/api/products");
+        const products = data.products || [];
+        body.innerHTML = "";
+        empty.hidden = products.length > 0;
+        for (const p of products) {
+          const tr = document.createElement("tr");
+          tr.innerHTML =
+            `<td>${esc(p.product_name)}</td>` +
+            `<td>${esc(p.frequency)}</td>` +
+            `<td>${fmtTime(p.next_run)}</td>` +
+            `<td class="row" style="justify-content:flex-end">` +
+              `<button class="small" data-history="${esc(p.product_name)}">Historia</button>` +
+              `<button class="small danger" data-delete="${esc(p.product_name)}">Usuń</button>` +
+            `</td>`;
+          body.appendChild(tr);
+        }
+      } catch (err) {
+        toast(err.message, "err");
+      }
+    }
+
+    document.getElementById("products-body").addEventListener("click", async (e) => {
+      const del = e.target.getAttribute("data-delete");
+      const hist = e.target.getAttribute("data-history");
+      if (del) {
+        if (!confirm(`Usunąć produkt „${del}”?`)) return;
+        try {
+          const data = await api("DELETE", "/api/products/" + encodeURIComponent(del));
+          toast(data.message || "Usunięto.", "ok");
+          loadProducts();
+        } catch (err) {
+          toast(err.message, "err");
+        }
+      } else if (hist) {
+        document.getElementById("history-product").value = hist;
+        loadHistory(hist);
+      }
+    });
+
+    // ---- historia ----
+    async function loadHistory(name) {
+      name = (name || document.getElementById("history-product").value).trim();
+      if (!name) return toast("Podaj nazwę produktu.", "err");
+      const body = document.getElementById("history-body");
+      const empty = document.getElementById("history-empty");
+      try {
+        const data = await api("GET", "/api/history?product=" + encodeURIComponent(name));
+        const entries = data.entries || [];
+        body.innerHTML = "";
+        empty.hidden = entries.length > 0;
+        for (const en of entries) {
+          const tr = document.createElement("tr");
+          const link = en.link
+            ? `<a href="${esc(en.link)}" target="_blank" rel="noopener">otwórz ↗</a>` : "—";
+          tr.innerHTML =
+            `<td>${fmtTime(en.scraped_at)}</td>` +
+            `<td>${esc(en.name)}</td>` +
+            `<td>${fmtPrice(en.price)}</td>` +
+            `<td>${link}</td>`;
+          body.appendChild(tr);
+        }
+      } catch (err) {
+        toast(err.message, "err");
+      }
+    }
+
+    document.getElementById("refresh-btn").addEventListener("click", loadProducts);
+    document.getElementById("history-btn").addEventListener("click", () => loadHistory());
+    document.getElementById("history-product").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") loadHistory();
+    });
+
+    // start
+    loadProducts();
+  </script>
+</body>
+</html>

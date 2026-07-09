@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/go-rod/stealth"
@@ -23,13 +24,31 @@ const (
 	idleWaitTimeout = 5 * time.Second
 )
 
+// searchBoxSelector matches the most common on-site search inputs across Polish
+// e-commerce shops. The first visible match is used to type the product query.
+const searchBoxSelector = `` +
+	`input[type="search"],` +
+	`input[name="q"],` +
+	`input[name="query"],` +
+	`input[name="search"],` +
+	`input[name="text"],` +
+	`input[name="phrase"],` +
+	`input[name="string"],` +
+	`input[name="szukaj"],` +
+	`input[id*="search" i],` +
+	`input[class*="search" i],` +
+	`input[placeholder*="szukaj" i],` +
+	`input[placeholder*="search" i],` +
+	`input[aria-label*="szukaj" i],` +
+	`input[aria-label*="search" i]`
+
 type Scraper struct {
 	browser *rod.Browser
 }
 
 func New() (*Scraper, error) {
 	l := launcher.New().
-		Headless(true).
+		Headless(false).
 		Set("disable-blink-features", "AutomationControlled").
 		Set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36").
 		Set("lang", "en-US,en").
@@ -62,25 +81,196 @@ func (s *Scraper) Close() {
 	s.browser.MustClose()
 }
 
-// SearchAndScrapeProduct searches DuckDuckGo for the product, crawls the first 5
-// result pages, and returns compact extracted data ready to send to an LLM.
-func (s *Scraper) SearchAndScrapeProduct(ctx context.Context, productName string) (string, error) {
-	searchResultURLs, err := s.collectSearchResultURLs(ctx, productName)
+// SearchAndScrapeProduct visits each given site one by one: it reaches the shop
+// through DuckDuckGo, uses the shop's own on-site search box to look up the
+// product, and scrapes the resulting listing page. Results from all sites are
+// joined with a separator so the LLM can tell the sources apart. When no sites
+// are provided it falls back to a global DuckDuckGo search.
+func (s *Scraper) SearchAndScrapeProduct(ctx context.Context, productName string, sites []string) (string, error) {
+	if len(sites) == 0 {
+		return s.globalSearch(ctx, productName)
+	}
+
+	var sb strings.Builder
+	scraped := 0
+
+	for _, site := range sites {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+
+		log.Printf("searching %q on site %q", productName, site)
+		data, err := s.searchProductOnSite(ctx, productName, site)
+		if err != nil {
+			log.Printf("site %q failed: %v", site, err)
+			continue
+		}
+
+		scraped++
+		sb.WriteString(fmt.Sprintf("\n\n--- SOURCE: %s ---\n\n", site))
+		sb.WriteString(data)
+	}
+
+	if scraped == 0 {
+		return "", fmt.Errorf("no product results across %d site(s)", len(sites))
+	}
+
+	log.Printf("scraped %d/%d site(s) for %q", scraped, len(sites), productName)
+	return sb.String(), nil
+}
+
+// searchProductOnSite reaches the shop via DuckDuckGo, runs the product query in
+// the shop's own search box and scrapes the results page it lands on.
+func (s *Scraper) searchProductOnSite(ctx context.Context, productName, site string) (string, error) {
+	domain := normalizeSiteDomain(site)
+	if domain == "" {
+		return "", fmt.Errorf("invalid site %q", site)
+	}
+
+	page, err := s.newStealthPage()
+	if err != nil {
+		return "", fmt.Errorf("failed to create stealth page: %w", err)
+	}
+	defer page.Close()
+
+	page.MustSetViewport(1366, 768, 1, false)
+
+	if err := s.reachSiteViaSearch(ctx, page, domain); err != nil {
+		return "", fmt.Errorf("failed to reach %s: %w", domain, err)
+	}
+
+	if err := performSiteSearch(page, productName); err != nil {
+		return "", fmt.Errorf("on-site search on %s failed: %w", domain, err)
+	}
+
+	landedURL := domain
+	if info, err := page.Info(); err == nil {
+		landedURL = info.URL
+	}
+
+	return extractPageData(page, landedURL)
+}
+
+// reachSiteViaSearch opens DuckDuckGo, searches for the shop domain and clicks
+// the first result on that domain so we arrive at the shop like an organic
+// visitor. If the click does not land us on the shop, it navigates directly.
+func (s *Scraper) reachSiteViaSearch(ctx context.Context, page *rod.Page, domain string) error {
+	params := url.Values{}
+	params.Set("q", domain)
+	params.Set("kl", "pl-pl")
+
+	if err := page.Navigate(searchURL + "?" + params.Encode()); err != nil {
+		return fmt.Errorf("failed to navigate to DuckDuckGo: %w", err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return fmt.Errorf("DuckDuckGo failed to load: %w", err)
+	}
+
+	_ = acceptCookieConsent(page)
+
+	if _, err := page.Timeout(pageTimeout).Element(`article[data-testid="result"]`); err != nil {
+		return fmt.Errorf("no DuckDuckGo results for %q: %w", domain, err)
+	}
+
+	links, err := page.Elements(`article[data-testid="result"] h2 a`)
+	if err != nil || len(links) == 0 {
+		return fmt.Errorf("no result links for %q", domain)
+	}
+
+	target := links[0]
+	for _, l := range links {
+		if href, err := l.Attribute("href"); err == nil && href != nil && strings.Contains(*href, domain) {
+			target = l
+			break
+		}
+	}
+
+	if err := target.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("failed to click result: %w", err)
+	}
+	if err := page.Timeout(pageTimeout).WaitLoad(); err != nil {
+		log.Printf("shop load wait timeout for %s: %v", domain, err)
+	}
+
+	// If clicking did not leave DuckDuckGo, fall back to a direct visit.
+	if info, err := page.Info(); err == nil && !strings.Contains(info.URL, domain) {
+		log.Printf("click did not reach %s (at %s), navigating directly", domain, info.URL)
+		if err := page.Navigate("https://" + domain); err != nil {
+			return fmt.Errorf("direct navigation to %s failed: %w", domain, err)
+		}
+		_ = page.Timeout(pageTimeout).WaitLoad()
+	}
+
+	_ = acceptCookieConsent(page)
+	return nil
+}
+
+// performSiteSearch finds the shop's search input, types the product name and
+// submits it, then waits for the results page to settle.
+func performSiteSearch(page *rod.Page, productName string) error {
+	box, err := page.Timeout(pageTimeout).Element(searchBoxSelector)
+	if err != nil {
+		return fmt.Errorf("search box not found: %w", err)
+	}
+
+	if err := box.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("failed to focus search box: %w", err)
+	}
+	_ = box.SelectAllText()
+	if err := box.Input(productName); err != nil {
+		return fmt.Errorf("failed to type query: %w", err)
+	}
+	if err := box.Type(input.Enter); err != nil {
+		return fmt.Errorf("failed to submit query: %w", err)
+	}
+
+	if err := page.Timeout(pageTimeout).WaitLoad(); err != nil {
+		log.Printf("results load timeout: %v", err)
+	}
+	page.Timeout(idleWaitTimeout).WaitRequestIdle(idleTimeout, nil, nil, nil)()
+
+	_ = acceptCookieConsent(page)
+	return nil
+}
+
+// globalSearch is the fallback used when a product has no sites configured: it
+// runs a single global DuckDuckGo search and scrapes the top result pages.
+func (s *Scraper) globalSearch(ctx context.Context, productName string) (string, error) {
+	urls, err := s.collectSearchResultURLs(ctx, productName)
 	if err != nil {
 		return "", fmt.Errorf("failed to collect search results: %w", err)
 	}
+	if len(urls) == 0 {
+		return "", fmt.Errorf("no search results found for %q", productName)
+	}
 
-	log.Printf("found %d URLs to scrape", len(searchResultURLs))
+	log.Printf("global search found %d URLs to scrape", len(urls))
 
-	combinedHTML, err := s.scrapePages(ctx, searchResultURLs)
+	combinedHTML, err := s.scrapePages(ctx, urls)
 	if err != nil {
 		return "", fmt.Errorf("failed to scrape pages: %w", err)
 	}
-
 	return combinedHTML, nil
 }
 
-func (s *Scraper) collectSearchResultURLs(ctx context.Context, productName string) ([]string, error) {
+// normalizeSiteDomain reduces a stored site value (domain or full URL) to a bare
+// host suitable for DuckDuckGo's `site:` operator.
+func normalizeSiteDomain(site string) string {
+	site = strings.TrimSpace(site)
+	if site == "" {
+		return ""
+	}
+	if !strings.Contains(site, "://") {
+		site = "//" + site
+	}
+	u, err := url.Parse(site)
+	if err != nil || u.Host == "" {
+		return strings.TrimPrefix(strings.TrimSpace(site), "//")
+	}
+	return u.Host
+}
+
+func (s *Scraper) collectSearchResultURLs(ctx context.Context, query string) ([]string, error) {
 	page, err := s.newStealthPage()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stealth page: %w", err)
@@ -90,7 +280,7 @@ func (s *Scraper) collectSearchResultURLs(ctx context.Context, productName strin
 	page.MustSetViewport(1366, 768, 1, false)
 
 	params := url.Values{}
-	params.Set("q", productName)
+	params.Set("q", query)
 	params.Set("kl", "pl-pl")
 	target := searchURL + "?" + params.Encode()
 
@@ -227,9 +417,8 @@ func acceptCookieConsent(page *rod.Page) error {
 	return btn.Click(proto.InputMouseButtonLeft, 1)
 }
 
-// fetchPageData opens a URL, extracts Schema.org JSON-LD and clean visible
-// text (scripts/styles/nav stripped), and returns a compact string ready to
-// include in an LLM prompt.
+// fetchPageData opens a URL and returns its extracted product data. Used by the
+// global-search fallback where we scrape result URLs directly.
 func (s *Scraper) fetchPageData(ctx context.Context, pageURL string) (string, error) {
 	page, err := s.newStealthPage()
 	if err != nil {
@@ -249,6 +438,13 @@ func (s *Scraper) fetchPageData(ctx context.Context, pageURL string) (string, er
 
 	page.Timeout(idleWaitTimeout).WaitRequestIdle(idleTimeout, nil, nil, nil)()
 
+	return extractPageData(page, pageURL)
+}
+
+// extractPageData pulls Schema.org JSON-LD and clean visible text (scripts,
+// styles and chrome stripped) from an already-loaded page and returns a compact
+// string ready to include in an LLM prompt.
+func extractPageData(page *rod.Page, pageURL string) (string, error) {
 	// Extract Schema.org JSON-LD blocks — compact structured product data.
 	jsonLD, err := page.Eval(`() =>
 		Array.from(document.querySelectorAll('script[type="application/ld+json"]'))

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"log"
-	"price-scrapper/discord"
 	"price-scrapper/llm"
+	"price-scrapper/notifier"
 	"price-scrapper/orchestrator/scraper"
 	"price-scrapper/service"
 	"sync/atomic"
@@ -15,21 +15,21 @@ import (
 const maxConcurrentJobs = 5
 
 type ScrapJobOrchestrator struct {
-	scrapService    service.Service
-	geminiSvc       *llm.GeminiService
-	discordNotifier *discord.Notifier
-	wakeUpChanel    chan struct{}
-	sem             chan struct{}
-	runningJobs     atomic.Int32
+	scrapService             service.Service
+	geminiSvc                *llm.GeminiService
+	communicationNotificator *notifier.Notifier
+	wakeUpChanel             chan struct{}
+	sem                      chan struct{}
+	runningJobs              atomic.Int32
 }
 
-func NewOrchestrator(svc service.Service, geminiSvc *llm.GeminiService, discordNotifier *discord.Notifier, wakeUpChanel chan struct{}) *ScrapJobOrchestrator {
+func NewOrchestrator(svc service.Service, geminiSvc *llm.GeminiService, communicationNotificator *notifier.Notifier, wakeUpChanel chan struct{}) *ScrapJobOrchestrator {
 	return &ScrapJobOrchestrator{
-		scrapService:    svc,
-		geminiSvc:       geminiSvc,
-		discordNotifier: discordNotifier,
-		wakeUpChanel:    wakeUpChanel,
-		sem:             make(chan struct{}, maxConcurrentJobs),
+		scrapService:             svc,
+		geminiSvc:                geminiSvc,
+		communicationNotificator: communicationNotificator,
+		wakeUpChanel:             wakeUpChanel,
+		sem:                      make(chan struct{}, maxConcurrentJobs),
 	}
 }
 
@@ -92,7 +92,7 @@ func (o *ScrapJobOrchestrator) RunOrchestrator(ctx context.Context) {
 				}
 				defer s.Close()
 
-				data, err := s.SearchAndScrapeProduct(ctx, job.ProductName)
+				data, err := s.SearchAndScrapeProduct(ctx, job.ProductName, job.SitesToVisit)
 				if err != nil {
 					log.Printf("Failed to search and scrape %q: %v", job.ProductName, err)
 					return
@@ -117,10 +117,8 @@ func (o *ScrapJobOrchestrator) RunOrchestrator(ctx context.Context) {
 					return
 				}
 
-				if o.discordNotifier != nil && len(products) > 0 {
-					if err := o.discordNotifier.NotifyProducts(job.ProductName, products); err != nil {
-						log.Printf("Discord notification failed for %q: %v", job.ProductName, err)
-					}
+				if len(products) > 0 {
+					o.communicationNotificator.Notify(job.ProductName, products)
 				}
 			}()
 		}

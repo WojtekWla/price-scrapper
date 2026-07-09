@@ -21,7 +21,7 @@ type Server struct {
 }
 
 func (s *Server) RegisterProduct(ctx context.Context, in *pb.ScrapProductRequest) (*pb.ScrapProductReply, error) {
-	err := s.ScrapperService.RegisterProduct(ctx, models.Product{Name: in.Product, Frequency: in.Frequency})
+	err := s.ScrapperService.RegisterProduct(ctx, models.Product{Name: in.Product, Frequency: in.Frequency, SitesToVisit: in.Sites})
 	if err != nil {
 		if errors.Is(err, service.ErrorInvalidFrequencyValue) {
 			return nil, status.Errorf(codes.InvalidArgument, err.Error())
