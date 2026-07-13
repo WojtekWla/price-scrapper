@@ -28,5 +28,16 @@ services:
       db:
         condition: service_healthy
 
+  gateway:
+    image: price-scrapper-gateway:latest
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - app
+
 volumes:
   pgdata:

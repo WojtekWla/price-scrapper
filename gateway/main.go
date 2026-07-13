@@ -1,7 +1,3 @@
-// Command gateway is a small HTTP/JSON microservice that sits in front of the
-// main gRPC Scraper server. The browser talks plain JSON to this service, and
-// this service acts as a gRPC client of the main server. This keeps the gRPC
-// contract intact while giving the frontend a build-free, CORS-friendly API.
 package main
 
 import (
@@ -51,8 +47,6 @@ func main() {
 		log.Fatalf("gateway server error: %v", err)
 	}
 }
-
-// ---- handlers ----
 
 func (g *gateway) registerProduct(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -143,8 +137,6 @@ func (g *gateway) getHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
-
-// ---- helpers ----
 
 func writeJSON(w http.ResponseWriter, statusCode int, v any) {
 	w.Header().Set("Content-Type", "application/json")
