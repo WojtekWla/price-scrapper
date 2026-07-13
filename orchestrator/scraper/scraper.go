@@ -22,6 +22,7 @@ const (
 	pageTimeout     = 15 * time.Second
 	idleTimeout     = 500 * time.Millisecond
 	idleWaitTimeout = 5 * time.Second
+	maxHTMLChars    = 120000 // cap per-page HTML sent to the LLM to bound tokens/cost
 )
 
 const searchBoxSelector = `` +
@@ -422,33 +423,55 @@ func extractPageData(page *rod.Page, pageURL string) (string, error) {
 		log.Printf("JSON-LD extraction failed for %s: %v", pageURL, err)
 	}
 
-	pageText, err := page.Eval(`() => {
+	// Produce a compact HTML: keep the DOM structure (so each offer's title,
+	// price and its <a href> stay together for the LLM), but drop heavy/noisy
+	// elements and every attribute except absolute hrefs on anchors. This lets
+	// the model read each product's own link straight from the markup.
+	pageHTML, err := page.Eval(`() => {
 		const clone = document.body.cloneNode(true);
 		clone.querySelectorAll(
-			'script,style,nav,header,footer,aside,noscript,iframe,svg'
+			'script,style,nav,header,footer,aside,noscript,iframe,svg,' +
+			'img,picture,video,source,link,meta,button,input,select,textarea,form,label'
 		).forEach(el => el.remove());
-		clone.querySelectorAll(
-			'p,div,h1,h2,h3,h4,h5,h6,li,tr,br,section,article'
-		).forEach(el => el.prepend('\n'));
-		return clone.textContent
-			.replace(/[ \t]+/g, ' ')
-			.replace(/\n{3,}/g, '\n\n')
+		clone.querySelectorAll('*').forEach(el => {
+			if (el.tagName === 'A') {
+				let abs = '';
+				try { abs = new URL(el.getAttribute('href'), document.baseURI).href; } catch (e) {}
+				[...el.attributes].forEach(a => el.removeAttribute(a.name));
+				if (/^https?:/.test(abs)) el.setAttribute('href', abs);
+			} else {
+				[...el.attributes].forEach(a => el.removeAttribute(a.name));
+			}
+		});
+		return clone.innerHTML
+			.replace(/<!--[\s\S]*?-->/g, '')
+			.replace(/>\s+</g, '><')
+			.replace(/\s{2,}/g, ' ')
 			.trim();
 	}`)
 	if err != nil {
-		return "", fmt.Errorf("text extraction failed for %s: %w", pageURL, err)
+		return "", fmt.Errorf("HTML extraction failed for %s: %w", pageURL, err)
+	}
+
+	html := ""
+	if pageHTML != nil {
+		html = pageHTML.Value.Str()
+	}
+	if len(html) > maxHTMLChars {
+		html = html[:maxHTMLChars]
+		log.Printf("truncated HTML for %s to %d chars", pageURL, maxHTMLChars)
 	}
 
 	var sb strings.Builder
 
 	if jsonLD != nil && jsonLD.Value.Str() != "" {
-		sb.WriteString("=== STRUCTURED DATA ===\n")
+		sb.WriteString("=== STRUCTURED DATA (JSON-LD) ===\n")
 		sb.WriteString(jsonLD.Value.Str())
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("=== PAGE TEXT ===\n")
-	sb.WriteString(pageText.Value.Str())
+	sb.WriteString("=== PAGE HTML (attributes stripped except <a href>) ===\n")
+	sb.WriteString(html)
 
 	return sb.String(), nil
 }

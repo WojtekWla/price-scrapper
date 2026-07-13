@@ -188,7 +188,10 @@
     }
 
     function fmtPrice(v) {
-      return Number(v).toLocaleString("pl-PL");
+      // Ceny są zapisywane w groszach (najmniejsza jednostka waluty), więc /100.
+      return (Number(v) / 100).toLocaleString("pl-PL", {
+        style: "currency", currency: "PLN",
+      });
     }
 
     function esc(s) {
