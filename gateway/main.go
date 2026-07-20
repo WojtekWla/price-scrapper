@@ -144,8 +144,6 @@ func writeJSON(w http.ResponseWriter, statusCode int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// writeGRPCError maps a gRPC status code onto a matching HTTP status code so the
-// frontend can react (e.g. 409 for an already-tracked product).
 func writeGRPCError(w http.ResponseWriter, err error) {
 	st := status.Convert(err)
 	httpCode := http.StatusInternalServerError

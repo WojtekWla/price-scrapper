@@ -423,10 +423,6 @@ func extractPageData(page *rod.Page, pageURL string) (string, error) {
 		log.Printf("JSON-LD extraction failed for %s: %v", pageURL, err)
 	}
 
-	// Produce a compact HTML: keep the DOM structure (so each offer's title,
-	// price and its <a href> stay together for the LLM), but drop heavy/noisy
-	// elements and every attribute except absolute hrefs on anchors. This lets
-	// the model read each product's own link straight from the markup.
 	pageHTML, err := page.Eval(`() => {
 		const clone = document.body.cloneNode(true);
 		clone.querySelectorAll(
