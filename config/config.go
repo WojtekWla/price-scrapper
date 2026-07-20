@@ -15,11 +15,17 @@ type DatabaseConfig struct {
 	MigrationFile string
 }
 
-type Config struct {
-	DB                DatabaseConfig
-	GeminiAPIKey      string
-	GeminiRPM         int
+type NotifierConfig struct {
+	DiscordFlag       bool
+	ConsoleFlag       bool
 	DiscordWebhookURL string
+}
+
+type Config struct {
+	DB             DatabaseConfig
+	GeminiAPIKey   string
+	GeminiRPM      int
+	NotifierConfig NotifierConfig
 }
 
 func InitializeConfigs() (Config, error) {
@@ -53,8 +59,12 @@ func InitializeConfigs() (Config, error) {
 			DbPort:        required["DB_PORT"],
 			MigrationFile: required["MIGRATIONS"],
 		},
-		GeminiAPIKey:      required["GEMINI_API_KEY"],
-		GeminiRPM:         rpm,
-		DiscordWebhookURL: os.Getenv("DISCORD_WEBHOOK_URL"),
+		NotifierConfig: NotifierConfig{
+			DiscordWebhookURL: os.Getenv("DISCORD_WEBHOOK_URL"),
+			DiscordFlag:       os.Getenv("DISCORD_FLAG") == "true",
+			ConsoleFlag:       os.Getenv("LOG_CONSOLE_FLAG") == "true",
+		},
+		GeminiAPIKey: required["GEMINI_API_KEY"],
+		GeminiRPM:    rpm,
 	}, nil
 }

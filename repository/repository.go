@@ -12,13 +12,13 @@ import (
 )
 
 const (
-	insertNewJob         = `INSERT INTO scrap_job(product_name, next_running_time, frequency) VALUES(@prodName, @nextRunningTime, @frequency)`
-	getJobsToRun         = `SELECT id, product_name, frequency, next_running_time FROM scrap_job WHERE next_running_time < @now`
+	insertNewJob         = `INSERT INTO scrap_job(product_name, next_running_time, frequency, sites) VALUES(@prodName, @nextRunningTime, @frequency, @sites)`
+	getJobsToRun         = `SELECT id, product_name, frequency, next_running_time, sites FROM scrap_job WHERE next_running_time < @now`
 	updateJobRunningTime = `UPDATE scrap_job SET next_running_time = $1 WHERE id = $2`
-	getSoonestJob        = `SELECT id, product_name, frequency, next_running_time FROM scrap_job ORDER BY next_running_time ASC LIMIT 1`
+	getSoonestJob        = `SELECT id, product_name, frequency, next_running_time, sites FROM scrap_job ORDER BY next_running_time ASC LIMIT 1`
 	insertProductHistory = `INSERT INTO product_history(product_name, price, link, scraped_at, search_term) VALUES($1, $2, $3, $4, $5)`
 	getProductHistory    = `SELECT product_name, price, link, scraped_at FROM product_history WHERE search_term = $1 ORDER BY scraped_at DESC`
-	getAllJobs            = `SELECT id, product_name, frequency, next_running_time FROM scrap_job ORDER BY created_at`
+	getAllJobs           = `SELECT id, product_name, frequency, next_running_time, sites FROM scrap_job ORDER BY created_at`
 	deleteJob            = `DELETE FROM scrap_job WHERE product_name = $1`
 )
 
@@ -65,6 +65,7 @@ func (r *ScrapperRepository) InsertNewJob(ctx context.Context, newJob models.Job
 		"prodName":        newJob.ProductName,
 		"nextRunningTime": newJob.TimeToRun,
 		"frequency":       newJob.Frequency,
+		"sites":           newJob.SitesToVisit,
 	}
 
 	_, err := r.dbPool.Exec(ctx, insertNewJob, args)
@@ -95,7 +96,7 @@ func (r *ScrapperRepository) GetJobAvailableToRun(ctx context.Context, current_t
 	var jobs []models.Job
 	for rows.Next() {
 		var j models.Job
-		if err := rows.Scan(&j.Id, &j.ProductName, &j.Frequency, &j.TimeToRun); err != nil {
+		if err := rows.Scan(&j.Id, &j.ProductName, &j.Frequency, &j.TimeToRun, &j.SitesToVisit); err != nil {
 			log.Printf("Error scanning job: %v", err)
 			return nil, ErrorExtractingJobsToRun
 		}
@@ -145,7 +146,7 @@ func (r *ScrapperRepository) GetSoonestJob(ctx context.Context) (*models.Job, er
 	var job models.Job
 	row := r.dbPool.QueryRow(ctx, getSoonestJob)
 
-	if err := row.Scan(&job.Id, &job.ProductName, &job.Frequency, &job.TimeToRun); err != nil {
+	if err := row.Scan(&job.Id, &job.ProductName, &job.Frequency, &job.TimeToRun, &job.SitesToVisit); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrorNoJobsFound
 		}
@@ -223,7 +224,7 @@ func (r *ScrapperRepository) GetAllJobs(ctx context.Context) ([]models.Job, erro
 	var jobs []models.Job
 	for rows.Next() {
 		var j models.Job
-		if err := rows.Scan(&j.Id, &j.ProductName, &j.Frequency, &j.TimeToRun); err != nil {
+		if err := rows.Scan(&j.Id, &j.ProductName, &j.Frequency, &j.TimeToRun, &j.SitesToVisit); err != nil {
 			log.Printf("Error scanning job: %v", err)
 			return nil, ErrorExtractingAllJobs
 		}

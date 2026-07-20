@@ -25,6 +25,7 @@ type ScrapProductRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Product       string                 `protobuf:"bytes,1,opt,name=product,proto3" json:"product,omitempty"`
 	Frequency     string                 `protobuf:"bytes,2,opt,name=frequency,proto3" json:"frequency,omitempty"`
+	Sites         []string               `protobuf:"bytes,3,rep,name=sites,proto3" json:"sites,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -71,6 +72,13 @@ func (x *ScrapProductRequest) GetFrequency() string {
 		return x.Frequency
 	}
 	return ""
+}
+
+func (x *ScrapProductRequest) GetSites() []string {
+	if x != nil {
+		return x.Sites
+	}
+	return nil
 }
 
 type ScrapProductReply struct {
@@ -513,10 +521,11 @@ var File_scraper_proto protoreflect.FileDescriptor
 
 const file_scraper_proto_rawDesc = "" +
 	"\n" +
-	"\rscraper.proto\"M\n" +
+	"\rscraper.proto\"c\n" +
 	"\x13ScrapProductRequest\x12\x18\n" +
 	"\aproduct\x18\x01 \x01(\tR\aproduct\x12\x1c\n" +
-	"\tfrequency\x18\x02 \x01(\tR\tfrequency\"-\n" +
+	"\tfrequency\x18\x02 \x01(\tR\tfrequency\x12\x14\n" +
+	"\x05sites\x18\x03 \x03(\tR\x05sites\"-\n" +
 	"\x11ScrapProductReply\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"=\n" +
 	"\x18GetProductHistoryRequest\x12!\n" +

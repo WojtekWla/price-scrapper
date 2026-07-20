@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"price-scrapper/config"
 	"price-scrapper/db"
-	"price-scrapper/discord"
 	"price-scrapper/llm"
+	"price-scrapper/notifier"
 	"price-scrapper/orchestrator"
 	pb "price-scrapper/proto_gen"
 	"price-scrapper/repository"
@@ -47,18 +47,12 @@ func main() {
 	}
 	defer geminiSvc.Close()
 
-	var discordNotifier *discord.Notifier
-	if conf.DiscordWebhookURL != "" {
-		discordNotifier = discord.New(conf.DiscordWebhookURL)
-		log.Println("Discord notifications enabled")
-	} else {
-		log.Println("Discord webhook not configured, notifications disabled")
-	}
+	communicationNotifier := notifier.NewNotifier(conf.NotifierConfig)
 
 	wakeUpChanel := make(chan struct{}, 1)
 	repo := repository.NewScrapperRepository(dbPool)
 	svc := service.NewScraperService(repo, wakeUpChanel)
-	orch := orchestrator.NewOrchestrator(svc, geminiSvc, discordNotifier, wakeUpChanel)
+	orch := orchestrator.NewOrchestrator(svc, geminiSvc, communicationNotifier, wakeUpChanel)
 
 	go orch.RunOrchestrator(ctx)
 

@@ -49,9 +49,10 @@ func (s *ScraperService) RegisterProduct(ctx context.Context, product models.Pro
 	}
 
 	newJob := models.Job{
-		ProductName: product.Name,
-		Frequency:   product.Frequency,
-		TimeToRun:   nextRunningTime,
+		ProductName:  product.Name,
+		Frequency:    product.Frequency,
+		TimeToRun:    nextRunningTime,
+		SitesToVisit: product.SitesToVisit,
 	}
 
 	err := s.scrapperRepository.InsertNewJob(ctx, newJob)

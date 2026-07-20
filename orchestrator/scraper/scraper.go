@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/go-rod/stealth"
@@ -21,7 +22,24 @@ const (
 	pageTimeout     = 15 * time.Second
 	idleTimeout     = 500 * time.Millisecond
 	idleWaitTimeout = 5 * time.Second
+	maxHTMLChars    = 120000 // cap per-page HTML sent to the LLM to bound tokens/cost
 )
+
+const searchBoxSelector = `` +
+	`input[type="search"],` +
+	`input[name="q"],` +
+	`input[name="query"],` +
+	`input[name="search"],` +
+	`input[name="text"],` +
+	`input[name="phrase"],` +
+	`input[name="string"],` +
+	`input[name="szukaj"],` +
+	`input[id*="search" i],` +
+	`input[class*="search" i],` +
+	`input[placeholder*="szukaj" i],` +
+	`input[placeholder*="search" i],` +
+	`input[aria-label*="szukaj" i],` +
+	`input[aria-label*="search" i]`
 
 type Scraper struct {
 	browser *rod.Browser
@@ -52,8 +70,6 @@ func New() (*Scraper, error) {
 	return &Scraper{browser: browser}, nil
 }
 
-// newStealthPage creates a page with all anti-detection scripts injected before
-// any page JavaScript runs, using CDP's addScriptToEvaluateOnNewDocument.
 func (s *Scraper) newStealthPage() (*rod.Page, error) {
 	return stealth.Page(s.browser)
 }
@@ -62,25 +78,179 @@ func (s *Scraper) Close() {
 	s.browser.MustClose()
 }
 
-// SearchAndScrapeProduct searches DuckDuckGo for the product, crawls the first 5
-// result pages, and returns compact extracted data ready to send to an LLM.
-func (s *Scraper) SearchAndScrapeProduct(ctx context.Context, productName string) (string, error) {
-	searchResultURLs, err := s.collectSearchResultURLs(ctx, productName)
+func (s *Scraper) SearchAndScrapeProduct(ctx context.Context, productName string, sites []string) (string, error) {
+	if len(sites) == 0 {
+		return s.globalSearch(ctx, productName)
+	}
+
+	var sb strings.Builder
+	scraped := 0
+
+	for _, site := range sites {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+
+		log.Printf("searching %q on site %q", productName, site)
+		data, err := s.searchProductOnSite(ctx, productName, site)
+		if err != nil {
+			log.Printf("site %q failed: %v", site, err)
+			continue
+		}
+
+		scraped++
+		sb.WriteString(fmt.Sprintf("\n\n--- SOURCE: %s ---\n\n", site))
+		sb.WriteString(data)
+	}
+
+	if scraped == 0 {
+		return "", fmt.Errorf("no product results across %d site(s)", len(sites))
+	}
+
+	log.Printf("scraped %d/%d site(s) for %q", scraped, len(sites), productName)
+	return sb.String(), nil
+}
+
+func (s *Scraper) searchProductOnSite(ctx context.Context, productName, site string) (string, error) {
+	domain := normalizeSiteDomain(site)
+	if domain == "" {
+		return "", fmt.Errorf("invalid site %q", site)
+	}
+
+	page, err := s.newStealthPage()
+	if err != nil {
+		return "", fmt.Errorf("failed to create stealth page: %w", err)
+	}
+	defer page.Close()
+
+	page.MustSetViewport(1366, 768, 1, false)
+
+	if err := s.reachSiteViaSearch(ctx, page, domain); err != nil {
+		return "", fmt.Errorf("failed to reach %s: %w", domain, err)
+	}
+
+	if err := performSiteSearch(page, productName); err != nil {
+		return "", fmt.Errorf("on-site search on %s failed: %w", domain, err)
+	}
+
+	landedURL := domain
+	if info, err := page.Info(); err == nil {
+		landedURL = info.URL
+	}
+
+	return extractPageData(page, landedURL)
+}
+
+func (s *Scraper) reachSiteViaSearch(ctx context.Context, page *rod.Page, domain string) error {
+	params := url.Values{}
+	params.Set("q", domain)
+	params.Set("kl", "pl-pl")
+
+	if err := page.Navigate(searchURL + "?" + params.Encode()); err != nil {
+		return fmt.Errorf("failed to navigate to DuckDuckGo: %w", err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return fmt.Errorf("DuckDuckGo failed to load: %w", err)
+	}
+
+	_ = acceptCookieConsent(page)
+
+	if _, err := page.Timeout(pageTimeout).Element(`article[data-testid="result"]`); err != nil {
+		return fmt.Errorf("no DuckDuckGo results for %q: %w", domain, err)
+	}
+
+	links, err := page.Elements(`article[data-testid="result"] h2 a`)
+	if err != nil || len(links) == 0 {
+		return fmt.Errorf("no result links for %q", domain)
+	}
+
+	target := links[0]
+	for _, l := range links {
+		if href, err := l.Attribute("href"); err == nil && href != nil && strings.Contains(*href, domain) {
+			target = l
+			break
+		}
+	}
+
+	if err := target.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("failed to click result: %w", err)
+	}
+	if err := page.Timeout(pageTimeout).WaitLoad(); err != nil {
+		log.Printf("shop load wait timeout for %s: %v", domain, err)
+	}
+
+	if info, err := page.Info(); err == nil && !strings.Contains(info.URL, domain) {
+		log.Printf("click did not reach %s (at %s), navigating directly", domain, info.URL)
+		if err := page.Navigate("https://" + domain); err != nil {
+			return fmt.Errorf("direct navigation to %s failed: %w", domain, err)
+		}
+		_ = page.Timeout(pageTimeout).WaitLoad()
+	}
+
+	_ = acceptCookieConsent(page)
+	return nil
+}
+
+func performSiteSearch(page *rod.Page, productName string) error {
+	box, err := page.Timeout(pageTimeout).Element(searchBoxSelector)
+	if err != nil {
+		return fmt.Errorf("search box not found: %w", err)
+	}
+
+	if err := box.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("failed to focus search box: %w", err)
+	}
+	_ = box.SelectAllText()
+	if err := box.Input(productName); err != nil {
+		return fmt.Errorf("failed to type query: %w", err)
+	}
+	if err := box.Type(input.Enter); err != nil {
+		return fmt.Errorf("failed to submit query: %w", err)
+	}
+
+	if err := page.Timeout(pageTimeout).WaitLoad(); err != nil {
+		log.Printf("results load timeout: %v", err)
+	}
+	page.Timeout(idleWaitTimeout).WaitRequestIdle(idleTimeout, nil, nil, nil)()
+
+	_ = acceptCookieConsent(page)
+	return nil
+}
+
+func (s *Scraper) globalSearch(ctx context.Context, productName string) (string, error) {
+	urls, err := s.collectSearchResultURLs(ctx, productName)
 	if err != nil {
 		return "", fmt.Errorf("failed to collect search results: %w", err)
 	}
+	if len(urls) == 0 {
+		return "", fmt.Errorf("no search results found for %q", productName)
+	}
 
-	log.Printf("found %d URLs to scrape", len(searchResultURLs))
+	log.Printf("global search found %d URLs to scrape", len(urls))
 
-	combinedHTML, err := s.scrapePages(ctx, searchResultURLs)
+	combinedHTML, err := s.scrapePages(ctx, urls)
 	if err != nil {
 		return "", fmt.Errorf("failed to scrape pages: %w", err)
 	}
-
 	return combinedHTML, nil
 }
 
-func (s *Scraper) collectSearchResultURLs(ctx context.Context, productName string) ([]string, error) {
+func normalizeSiteDomain(site string) string {
+	site = strings.TrimSpace(site)
+	if site == "" {
+		return ""
+	}
+	if !strings.Contains(site, "://") {
+		site = "//" + site
+	}
+	u, err := url.Parse(site)
+	if err != nil || u.Host == "" {
+		return strings.TrimPrefix(strings.TrimSpace(site), "//")
+	}
+	return u.Host
+}
+
+func (s *Scraper) collectSearchResultURLs(ctx context.Context, query string) ([]string, error) {
 	page, err := s.newStealthPage()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stealth page: %w", err)
@@ -90,7 +260,7 @@ func (s *Scraper) collectSearchResultURLs(ctx context.Context, productName strin
 	page.MustSetViewport(1366, 768, 1, false)
 
 	params := url.Values{}
-	params.Set("q", productName)
+	params.Set("q", query)
 	params.Set("kl", "pl-pl")
 	target := searchURL + "?" + params.Encode()
 
@@ -123,7 +293,6 @@ func (s *Scraper) collectSearchResultURLs(ctx context.Context, productName strin
 	return allURLs, nil
 }
 
-// extractResultURLs pulls href values from DuckDuckGo's organic result links.
 func extractResultURLs(page *rod.Page) ([]string, error) {
 	elements, err := page.Elements(`article[data-testid="result"] h2 a`)
 	if err != nil {
@@ -147,8 +316,6 @@ func extractResultURLs(page *rod.Page) ([]string, error) {
 	return urls, nil
 }
 
-// scrapePages visits each URL concurrently and returns all extracted data joined
-// by a separator that the LLM can use to distinguish sources.
 func (s *Scraper) scrapePages(ctx context.Context, urls []string) (string, error) {
 	type result struct {
 		index int
@@ -193,11 +360,7 @@ func (s *Scraper) scrapePages(ctx context.Context, urls []string) (string, error
 	return sb.String(), nil
 }
 
-// acceptCookieConsent tries to dismiss cookie/consent banners silently.
-// Covers the most common GDPR CMP providers found on Polish e-commerce sites.
-// Failure is not fatal — scraping continues regardless.
 func acceptCookieConsent(page *rod.Page) error {
-	// Single combined selector so we pay at most one 3s timeout instead of N×timeout.
 	const combined = `` +
 		`#onetrust-accept-btn-handler,` + // OneTrust
 		`button.onetrust-close-btn-handler,` +
@@ -227,9 +390,6 @@ func acceptCookieConsent(page *rod.Page) error {
 	return btn.Click(proto.InputMouseButtonLeft, 1)
 }
 
-// fetchPageData opens a URL, extracts Schema.org JSON-LD and clean visible
-// text (scripts/styles/nav stripped), and returns a compact string ready to
-// include in an LLM prompt.
 func (s *Scraper) fetchPageData(ctx context.Context, pageURL string) (string, error) {
 	page, err := s.newStealthPage()
 	if err != nil {
@@ -249,7 +409,10 @@ func (s *Scraper) fetchPageData(ctx context.Context, pageURL string) (string, er
 
 	page.Timeout(idleWaitTimeout).WaitRequestIdle(idleTimeout, nil, nil, nil)()
 
-	// Extract Schema.org JSON-LD blocks — compact structured product data.
+	return extractPageData(page, pageURL)
+}
+
+func extractPageData(page *rod.Page, pageURL string) (string, error) {
 	jsonLD, err := page.Eval(`() =>
 		Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
 			.map(s => s.textContent.trim())
@@ -260,35 +423,51 @@ func (s *Scraper) fetchPageData(ctx context.Context, pageURL string) (string, er
 		log.Printf("JSON-LD extraction failed for %s: %v", pageURL, err)
 	}
 
-	// Extract visible text: remove noisy elements, insert newlines at block
-	// boundaries, collapse whitespace.
-	pageText, err := page.Eval(`() => {
+	pageHTML, err := page.Eval(`() => {
 		const clone = document.body.cloneNode(true);
 		clone.querySelectorAll(
-			'script,style,nav,header,footer,aside,noscript,iframe,svg'
+			'script,style,nav,header,footer,aside,noscript,iframe,svg,' +
+			'img,picture,video,source,link,meta,button,input,select,textarea,form,label'
 		).forEach(el => el.remove());
-		clone.querySelectorAll(
-			'p,div,h1,h2,h3,h4,h5,h6,li,tr,br,section,article'
-		).forEach(el => el.prepend('\n'));
-		return clone.textContent
-			.replace(/[ \t]+/g, ' ')
-			.replace(/\n{3,}/g, '\n\n')
+		clone.querySelectorAll('*').forEach(el => {
+			if (el.tagName === 'A') {
+				let abs = '';
+				try { abs = new URL(el.getAttribute('href'), document.baseURI).href; } catch (e) {}
+				[...el.attributes].forEach(a => el.removeAttribute(a.name));
+				if (/^https?:/.test(abs)) el.setAttribute('href', abs);
+			} else {
+				[...el.attributes].forEach(a => el.removeAttribute(a.name));
+			}
+		});
+		return clone.innerHTML
+			.replace(/<!--[\s\S]*?-->/g, '')
+			.replace(/>\s+</g, '><')
+			.replace(/\s{2,}/g, ' ')
 			.trim();
 	}`)
 	if err != nil {
-		return "", fmt.Errorf("text extraction failed for %s: %w", pageURL, err)
+		return "", fmt.Errorf("HTML extraction failed for %s: %w", pageURL, err)
+	}
+
+	html := ""
+	if pageHTML != nil {
+		html = pageHTML.Value.Str()
+	}
+	if len(html) > maxHTMLChars {
+		html = html[:maxHTMLChars]
+		log.Printf("truncated HTML for %s to %d chars", pageURL, maxHTMLChars)
 	}
 
 	var sb strings.Builder
 
 	if jsonLD != nil && jsonLD.Value.Str() != "" {
-		sb.WriteString("=== STRUCTURED DATA ===\n")
+		sb.WriteString("=== STRUCTURED DATA (JSON-LD) ===\n")
 		sb.WriteString(jsonLD.Value.Str())
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("=== PAGE TEXT ===\n")
-	sb.WriteString(pageText.Value.Str())
+	sb.WriteString("=== PAGE HTML (attributes stripped except <a href>) ===\n")
+	sb.WriteString(html)
 
 	return sb.String(), nil
 }

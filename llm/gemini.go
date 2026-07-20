@@ -14,7 +14,11 @@ import (
 
 const (
 	model       = "gemini-2.5-flash-lite"
-	instruction = "Extract all products from the provided data. For each product return its name, price as an integer in the smallest currency unit, and the source link."
+	instruction = "The data is the cleaned HTML of a shop's search results page. Extract all product offers from it. " +
+		"For each product return its name, its price as an integer in the smallest currency unit, and its link. " +
+		"The link MUST be the value of the href attribute of the <a> tag that wraps or belongs to that specific product's offer (its own product page). " +
+		"Take the href verbatim from the HTML — do not invent or modify URLs, and never use a search, listing or category page URL. " +
+		"If a product has no own offer href in the HTML, skip it."
 )
 
 type GeminiService struct {
